@@ -13,40 +13,41 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Download and unpack dependencies
+    - name: Download and extract dependencies
+      env:
+        GH_TOKEN: ${{ github.token }}
       shell: pwsh
       run: |
-        # Получаем список ассетов из API репозитория зависимостей
-        $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/xmrig/xmrig-deps/releases"
-        $asset = ($releases | Select-Object -ExpandProperty assets | Where-Object { $_.name -like "*msvc2022*.zip" -or $_.name -like "*win64*.zip" } | Select-Object -First 1)
-        Write-Host "Found dependency asset: $($asset.name) -> $($asset.browser_download_url)"
+        New-Item -ItemType Directory -Path "$env:RUNNER_TEMP\deps" -Force | Out-Null
+        # Скачиваем релиз зависимостей через GitHub CLI
+        gh release download --repo xmrig/xmrig-deps --dir "$env:RUNNER_TEMP\deps"
         
-        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "xmrig-deps.zip"
-        Expand-Archive -Path "xmrig-deps.zip" -DestinationPath "$env:RUNNER_TEMP\extracted_deps" -Force
+        # Находим скачанный zip архив
+        $zip = (Get-ChildItem "$env:RUNNER_TEMP\deps\*.zip" | Select-Object -First 1).FullName
+        Write-Host "Unpacking dependency archive: $zip"
+        Expand-Archive -Path $zip -DestinationPath "$env:RUNNER_TEMP\extracted" -Force
         
-        # Находим внутреннюю папку со структурой include/lib и переносим
-        $depsFolder = Get-ChildItem -Path "$env:RUNNER_TEMP\extracted_deps" -Recurse -Directory | Where-Object { Test-Path "$($_.FullName)\include" } | Select-Object -First 1
-        $targetPath = Resolve-Path "$env:GITHUB_WORKSPACE\.."
+        # Ищем папку, содержащую 'include'
+        $incDir = (Get-ChildItem -Path "$env:RUNNER_TEMP\extracted" -Recurse -Directory -Filter "include" | Select-Object -First 1).Parent.FullName
+        Write-Host "Found deps root at: $incDir"
         
-        if ($depsFolder) {
-            Copy-Item -Path $depsFolder.FullName -Destination "$targetPath\xmrig-deps" -Recurse -Force
-        } else {
-            Copy-Item -Path "$env:RUNNER_TEMP\extracted_deps" -Destination "$targetPath\xmrig-deps" -Recurse -Force
-        }
+        # Переносим в ..\xmrig-deps рядом с репозиторием
+        $target = "$env:GITHUB_WORKSPACE\..\xmrig-deps"
+        New-Item -ItemType Directory -Path $target -Force | Out-Null
+        Copy-Item -Path "$incDir\*" -Destination $target -Recurse -Force
 
     - name: Configure CMake
+      shell: pwsh
       run: |
-        mkdir build
-        cd build
-        cmake .. -G "Visual Studio 17 2022" -A x64 -DXMRIG_DEPS="${{ github.workspace }}\..\xmrig-deps"
+        cmake -B build -S . -G "Visual Studio 17 2022" -A x64 -DXMRIG_DEPS="$env:GITHUB_WORKSPACE\..\xmrig-deps"
 
     - name: Build Release
+      shell: pwsh
       run: |
-        cd build
-        cmake --build . --config Release
+        cmake --build build --config Release
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: xmrig-no-donate-win64
-        path: build/**/xmrig.exe
+        path: build/Release/xmrig.exe
