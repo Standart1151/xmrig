@@ -2,7 +2,7 @@ name: Build Windows XMRig
 
 on:
   push:
-    branches: [ "master", "dev" ]
+    branches: [ "master", "dev", "main" ]
   workflow_dispatch:
 
 jobs:
@@ -16,16 +16,15 @@ jobs:
     - name: Download and unpack dependencies
       shell: pwsh
       run: |
-        Invoke-WebRequest -Uri "https://github.com/xmrig/xmrig-deps/releases/download/v4.4/xmrig-deps-msvc2022-x64.zip" -OutFile "xmrig-deps.zip"
-        Expand-Archive -Path "xmrig-deps.zip" -DestinationPath "xmrig-deps"
-        # Переносим папку с зависимостями на один уровень выше репозитория, как требует CMake
-        Move-Item -Path "xmrig-deps\xmrig-deps\*" -Destination "..\xmrig-deps" -ErrorAction SilentlyContinue
+        $url = "https://github.com/xmrig/xmrig-deps/releases/download/v4.4/xmrig-deps-4.4-msvc2022-win64.zip"
+        Invoke-WebRequest -Uri $url -OutFile "xmrig-deps.zip"
+        Expand-Archive -Path "xmrig-deps.zip" -DestinationPath "$env:GITHUB_WORKSPACE\..\xmrig-deps"
 
     - name: Configure CMake
       run: |
         mkdir build
         cd build
-        cmake .. -G "Visual Studio 17 2022" -A x64
+        cmake .. -G "Visual Studio 17 2022" -A x64 -DXMRIG_DEPS="${{ github.workspace }}\..\xmrig-deps"
 
     - name: Build Release
       run: |
