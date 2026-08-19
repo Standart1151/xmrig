@@ -2,7 +2,7 @@ name: Build Windows XMRig
 
 on:
   push:
-    branches: [ "master", "dev", "main" ]
+    branches: [ "**" ]
   workflow_dispatch:
 
 jobs:
@@ -16,9 +16,23 @@ jobs:
     - name: Download and unpack dependencies
       shell: pwsh
       run: |
-        $url = "https://github.com/xmrig/xmrig-deps/releases/download/v4.4/xmrig-deps-4.4-msvc2022-win64.zip"
-        Invoke-WebRequest -Uri $url -OutFile "xmrig-deps.zip"
-        Expand-Archive -Path "xmrig-deps.zip" -DestinationPath "$env:GITHUB_WORKSPACE\..\xmrig-deps"
+        # Получаем список ассетов из API репозитория зависимостей
+        $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/xmrig/xmrig-deps/releases"
+        $asset = ($releases | Select-Object -ExpandProperty assets | Where-Object { $_.name -like "*msvc2022*.zip" -or $_.name -like "*win64*.zip" } | Select-Object -First 1)
+        Write-Host "Found dependency asset: $($asset.name) -> $($asset.browser_download_url)"
+        
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "xmrig-deps.zip"
+        Expand-Archive -Path "xmrig-deps.zip" -DestinationPath "$env:RUNNER_TEMP\extracted_deps" -Force
+        
+        # Находим внутреннюю папку со структурой include/lib и переносим
+        $depsFolder = Get-ChildItem -Path "$env:RUNNER_TEMP\extracted_deps" -Recurse -Directory | Where-Object { Test-Path "$($_.FullName)\include" } | Select-Object -First 1
+        $targetPath = Resolve-Path "$env:GITHUB_WORKSPACE\.."
+        
+        if ($depsFolder) {
+            Copy-Item -Path $depsFolder.FullName -Destination "$targetPath\xmrig-deps" -Recurse -Force
+        } else {
+            Copy-Item -Path "$env:RUNNER_TEMP\extracted_deps" -Destination "$targetPath\xmrig-deps" -Recurse -Force
+        }
 
     - name: Configure CMake
       run: |
@@ -35,4 +49,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: xmrig-no-donate-win64
-        path: build/Release/xmrig.exe
+        path: build/**/xmrig.exe
