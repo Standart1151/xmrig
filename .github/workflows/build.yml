@@ -14,27 +14,40 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Download and extract dependencies
-      env:
-        GH_TOKEN: ${{ github.token }}
       shell: pwsh
       run: |
-        New-Item -ItemType Directory -Path "$env:RUNNER_TEMP\deps" -Force | Out-Null
-        # Скачиваем релиз зависимостей через GitHub CLI
-        gh release download --repo xmrig/xmrig-deps --dir "$env:RUNNER_TEMP\deps"
+        $headers = @{
+            "User-Agent" = "GitHub-Actions-Runner"
+            "Authorization" = "Bearer ${{ secrets.GITHUB_TOKEN }}"
+        }
+
+        # Получаем список релизов с авторизацией
+        $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/xmrig/xmrig-deps/releases" -Headers $headers
         
-        # Находим скачанный zip архив
-        $zip = (Get-ChildItem "$env:RUNNER_TEMP\deps\*.zip" | Select-Object -First 1).FullName
-        Write-Host "Unpacking dependency archive: $zip"
-        Expand-Archive -Path $zip -DestinationPath "$env:RUNNER_TEMP\extracted" -Force
+        # Находим файл для MSVC2022
+        $asset = $releases | ForEach-Object { $_.assets } | Where-Object { $_.name -like "*msvc2022*win64*.zip" -or $_.name -like "*msvc2022*.zip" } | Select-Object -First 1
         
-        # Ищем папку, содержащую 'include'
-        $incDir = (Get-ChildItem -Path "$env:RUNNER_TEMP\extracted" -Recurse -Directory -Filter "include" | Select-Object -First 1).Parent.FullName
-        Write-Host "Found deps root at: $incDir"
-        
-        # Переносим в ..\xmrig-deps рядом с репозиторием
-        $target = "$env:GITHUB_WORKSPACE\..\xmrig-deps"
-        New-Item -ItemType Directory -Path $target -Force | Out-Null
-        Copy-Item -Path "$incDir\*" -Destination $target -Recurse -Force
+        if (-not $asset) {
+            Write-Error "Не удалось найти архив зависимостей в релизах xmrig-deps"
+            exit 1
+        }
+
+        Write-Host "Скачиваем ассет: $($asset.name)"
+        Write-Host "URL: $($asset.browser_download_url)"
+
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "$env:RUNNER_TEMP\deps.zip"
+        Expand-Archive -Path "$env:RUNNER_TEMP\deps.zip" -DestinationPath "$env:RUNNER_TEMP\deps_extracted" -Force
+
+        # Находим корневую папку с 'include' и 'lib'
+        $incDir = Get-ChildItem -Path "$env:RUNNER_TEMP\deps_extracted" -Recurse -Directory -Filter "include" | Select-Object -First 1
+        $depsRoot = $incDir.Parent.FullName
+        Write-Host "Найдена корневая папка зависимостей: $depsRoot"
+
+        # Копируем зависимости в ..\xmrig-deps
+        $targetDeps = "$env:GITHUB_WORKSPACE\..\xmrig-deps"
+        New-Item -ItemType Directory -Path $targetDeps -Force | Out-Null
+        Copy-Item -Path "$depsRoot\*" -Destination $targetDeps -Recurse -Force
+        Write-Host "Зависимости успешно скопированы в $targetDeps"
 
     - name: Configure CMake
       shell: pwsh
@@ -50,4 +63,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: xmrig-no-donate-win64
-        path: build/Release/xmrig.exe
+        path: build/**/xmrig.exe
