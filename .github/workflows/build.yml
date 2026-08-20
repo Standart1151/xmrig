@@ -21,33 +21,33 @@ jobs:
             "Authorization" = "Bearer ${{ secrets.GITHUB_TOKEN }}"
         }
 
-        # Получаем список релизов с авторизацией
         $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/xmrig/xmrig-deps/releases" -Headers $headers
-        
-        # Находим файл для MSVC2022
-        $asset = $releases | ForEach-Object { $_.assets } | Where-Object { $_.name -like "*msvc2022*win64*.zip" -or $_.name -like "*msvc2022*.zip" } | Select-Object -First 1
-        
+        $allAssets = $releases | ForEach-Object { $_.assets }
+
+        Write-Host "Доступные ассеты в xmrig-deps:"
+        $allAssets | ForEach-Object { Write-Host " - $($_.name)" }
+
+        # Ищем 64-битный архив под MSVC / Windows
+        $asset = $allAssets | Where-Object { $_.name -match '(msvc|win64|x64)' -and $_.name -like '*.zip' } | Select-Object -First 1
+
         if (-not $asset) {
-            Write-Error "Не удалось найти архив зависимостей в релизах xmrig-deps"
+            Write-Error "Не найден подходящий zip-архив с зависимостями"
             exit 1
         }
 
-        Write-Host "Скачиваем ассет: $($asset.name)"
-        Write-Host "URL: $($asset.browser_download_url)"
-
+        Write-Host "Выбран ассет: $($asset.name)"
         Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "$env:RUNNER_TEMP\deps.zip"
         Expand-Archive -Path "$env:RUNNER_TEMP\deps.zip" -DestinationPath "$env:RUNNER_TEMP\deps_extracted" -Force
 
-        # Находим корневую папку с 'include' и 'lib'
+        # Ищем корень с папкой include
         $incDir = Get-ChildItem -Path "$env:RUNNER_TEMP\deps_extracted" -Recurse -Directory -Filter "include" | Select-Object -First 1
         $depsRoot = $incDir.Parent.FullName
-        Write-Host "Найдена корневая папка зависимостей: $depsRoot"
+        Write-Host "Корень зависимостей: $depsRoot"
 
-        # Копируем зависимости в ..\xmrig-deps
+        # Переносим в ..\xmrig-deps для CMake
         $targetDeps = "$env:GITHUB_WORKSPACE\..\xmrig-deps"
         New-Item -ItemType Directory -Path $targetDeps -Force | Out-Null
         Copy-Item -Path "$depsRoot\*" -Destination $targetDeps -Recurse -Force
-        Write-Host "Зависимости успешно скопированы в $targetDeps"
 
     - name: Configure CMake
       shell: pwsh
@@ -63,4 +63,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: xmrig-no-donate-win64
-        path: build/**/xmrig.exe
+        path: build/Release/xmrig.exe
