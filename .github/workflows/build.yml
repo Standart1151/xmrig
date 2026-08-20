@@ -7,11 +7,16 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-2022
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+
+    - name: Set up MSVC environment
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
 
     - name: Download and extract dependencies
       shell: pwsh
@@ -24,7 +29,6 @@ jobs:
         $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/xmrig/xmrig-deps/releases" -Headers $headers
         $allAssets = $releases | ForEach-Object { $_.assets }
 
-        # Выбираем основной архив xmrig-deps.zip
         $asset = $allAssets | Where-Object { $_.name -eq 'xmrig-deps.zip' } | Select-Object -First 1
         if (-not $asset) {
             $asset = $allAssets | Where-Object { $_.name -like '*.zip' } | Select-Object -First 1
@@ -34,12 +38,10 @@ jobs:
         Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "$env:RUNNER_TEMP\deps.zip"
         Expand-Archive -Path "$env:RUNNER_TEMP\deps.zip" -DestinationPath "$env:RUNNER_TEMP\deps_extracted" -Force
 
-        # Поиск корневой директории с include
         $incDir = Get-ChildItem -Path "$env:RUNNER_TEMP\deps_extracted" -Recurse -Directory -Filter "include" | Select-Object -First 1
         $depsRoot = if ($incDir) { $incDir.Parent.FullName } else { "$env:RUNNER_TEMP\deps_extracted" }
         Write-Host "Корень зависимостей: $depsRoot"
 
-        # Перенос в ..\xmrig-deps для CMake
         $targetDeps = "$env:GITHUB_WORKSPACE\..\xmrig-deps"
         New-Item -ItemType Directory -Path $targetDeps -Force | Out-Null
         Copy-Item -Path "$depsRoot\*" -Destination $targetDeps -Recurse -Force
@@ -58,4 +60,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: xmrig-no-donate-win64
-        path: build/**/xmrig.exe
+        path: build/Release/xmrig.exe
