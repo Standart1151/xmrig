@@ -7,57 +7,33 @@ on:
 
 jobs:
   build:
-    runs-on: windows-2022
+    runs-on: windows-latest
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Set up MSVC environment
-      uses: ilammy/msvc-dev-cmd@v1
+    - name: Setup MSYS2 and Dependencies
+      uses: msys2/setup-msys2@v2
       with:
-        arch: x64
+        msystem: MINGW64
+        update: true
+        install: >-
+          mingw-w64-x86_64-gcc
+          mingw-w64-x86_64-cmake
+          mingw-w64-x86_64-ninja
+          mingw-w64-x86_64-libuv
+          mingw-w64-x86_64-openssl
+          mingw-w64-x86_64-hwloc
 
-    - name: Download and extract dependencies
-      shell: pwsh
+    - name: Compile XMRig (Static)
+      shell: msys2 {0}
       run: |
-        $headers = @{
-            "User-Agent" = "GitHub-Actions-Runner"
-            "Authorization" = "Bearer ${{ secrets.GITHUB_TOKEN }}"
-        }
-
-        $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/xmrig/xmrig-deps/releases" -Headers $headers
-        $allAssets = $releases | ForEach-Object { $_.assets }
-
-        $asset = $allAssets | Where-Object { $_.name -eq 'xmrig-deps.zip' } | Select-Object -First 1
-        if (-not $asset) {
-            $asset = $allAssets | Where-Object { $_.name -like '*.zip' } | Select-Object -First 1
-        }
-
-        Write-Host "Скачиваем ассет: $($asset.name)"
-        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "$env:RUNNER_TEMP\deps.zip"
-        Expand-Archive -Path "$env:RUNNER_TEMP\deps.zip" -DestinationPath "$env:RUNNER_TEMP\deps_extracted" -Force
-
-        $incDir = Get-ChildItem -Path "$env:RUNNER_TEMP\deps_extracted" -Recurse -Directory -Filter "include" | Select-Object -First 1
-        $depsRoot = if ($incDir) { $incDir.Parent.FullName } else { "$env:RUNNER_TEMP\deps_extracted" }
-        Write-Host "Корень зависимостей: $depsRoot"
-
-        $targetDeps = "$env:GITHUB_WORKSPACE\..\xmrig-deps"
-        New-Item -ItemType Directory -Path $targetDeps -Force | Out-Null
-        Copy-Item -Path "$depsRoot\*" -Destination $targetDeps -Recurse -Force
-
-    - name: Configure CMake
-      shell: pwsh
-      run: |
-        cmake -B build -S . -G "Visual Studio 17 2022" -A x64 -DXMRIG_DEPS="$env:GITHUB_WORKSPACE\..\xmrig-deps"
-
-    - name: Build Release
-      shell: pwsh
-      run: |
-        cmake --build build --config Release
+        cmake -B build -G "Ninja" -DBUILD_STATIC=ON
+        cmake --build build
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: xmrig-no-donate-win64
-        path: build/Release/xmrig.exe
+        path: build/xmrig.exe
